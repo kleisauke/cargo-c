@@ -12,6 +12,7 @@ use crate::build::CApiConfig;
 #[derive(Clone, Debug)]
 pub struct Target {
     pub is_target_overridden: bool,
+    pub abi: String,
     pub arch: String,
     // pub vendor: String,
     pub os: String,
@@ -39,6 +40,7 @@ impl Target {
                     .to_owned()
             }
 
+            let abi_re = regex::Regex::new(r#"target_abi="(.+)""#).unwrap();
             let arch_re = regex::Regex::new(r#"target_arch="(.+)""#).unwrap();
             // let vendor_re = regex::Regex::new(r#"target_vendor="(.+)""#).unwrap();
             let os_re = regex::Regex::new(r#"target_os="(.+)""#).unwrap();
@@ -47,6 +49,7 @@ impl Target {
             let s = std::str::from_utf8(&out.stdout).unwrap();
 
             Ok(Target {
+                abi: match_re(abi_re, s),
                 arch: match_re(arch_re, s),
                 // vendor: match_re(vendor_re, s),
                 os: match_re(os_re, s),

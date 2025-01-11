@@ -182,9 +182,17 @@ fn build_implib_file(
 
         let flavor = match target.env.as_str() {
             "msvc" => Flavor::Msvc,
+            // LLVM outputs an MSVC-style (aka. "short") import library by
+            // default.
+            "gnu" if target.abi == "llvm" => Flavor::Msvc,
+            // A legacy (aka. "long") import library for compat with Binutils
+            // versions prior to 2.40.
             _ => Flavor::Gnu,
         };
 
+        // FIXME: Arm64EC/Arm64X isn't supported by implib crate, switch to
+        // ar_archive_writer once Rust requires at least Binutils 2.40.
+        // See: https://github.com/rust-lang/rust/issues/103939#issuecomment-2583111482
         let machine_type = match target.arch.as_str() {
             "x86_64" => MachineType::AMD64,
             "x86" => MachineType::I386,

@@ -52,7 +52,7 @@ struct Common {
     #[clap(long = "crt-static")]
     /// Build the library embedding the C runtime
     crt_static: bool,
-    /// Use the Linux/Meson library naming convention on Windows
+    /// Use the Linux/Meson library naming convention on Windows. (deprecated and no-op)
     #[clap(long = "meson-paths", default_value = "false")]
     meson: bool,
 }

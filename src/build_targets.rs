@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::build::{CApiConfig, InstallTarget, LibraryTypes};
@@ -55,7 +54,6 @@ pub struct BuildTargets {
     pub pc: PathBuf,
     pub target: Target,
     pub extra: ExtraTargets,
-    pub use_meson_naming_convention: bool,
 }
 
 impl BuildTargets {
@@ -65,7 +63,6 @@ impl BuildTargets {
         targetdir: &Path,
         library_types: LibraryTypes,
         capi_config: &CApiConfig,
-        use_meson_naming_convention: bool,
     ) -> anyhow::Result<BuildTargets> {
         let pc = targetdir.join(format!("{}.pc", &capi_config.pkg_config.filename));
         let include = if capi_config.header.enabled && capi_config.header.generation {
@@ -74,9 +71,7 @@ impl BuildTargets {
             None
         };
 
-        let Some(file_names) =
-            FileNames::from_target(target, name, targetdir, use_meson_naming_convention)
-        else {
+        let Some(file_names) = FileNames::from_target(target, name, targetdir) else {
             return Err(anyhow::anyhow!(
                 "The target {}-{} is not supported yet",
                 target.os,
@@ -92,7 +87,6 @@ impl BuildTargets {
             impl_lib: file_names.impl_lib,
             debug_info: file_names.debug_info,
             def: file_names.def,
-            use_meson_naming_convention,
             name: name.into(),
             target: target.clone(),
             extra: Default::default(),
@@ -114,35 +108,6 @@ impl BuildTargets {
             LibType::Windows => Some(bindir.join(self.debug_info.as_ref()?.file_name()?)),
         }
     }
-
-    pub fn static_output_file_name(&self) -> Option<OsString> {
-        match self.lib_type() {
-            LibType::Windows => {
-                if self.static_lib.is_some() && self.use_meson_naming_convention {
-                    Some(format!("lib{}.a", self.name).into())
-                } else {
-                    Some(self.static_lib.as_ref()?.file_name()?.to_owned())
-                }
-            }
-            _ => Some(self.static_lib.as_ref()?.file_name()?.to_owned()),
-        }
-    }
-
-    pub fn shared_output_file_name(&self) -> Option<OsString> {
-        match self.lib_type() {
-            LibType::Windows => {
-                if self.shared_lib.is_some()
-                    && self.use_meson_naming_convention
-                    && self.target.env == "gnu"
-                {
-                    Some(format!("lib{}.dll", self.name).into())
-                } else {
-                    Some(self.shared_lib.as_ref()?.file_name()?.to_owned())
-                }
-            }
-            _ => Some(self.shared_lib.as_ref()?.file_name()?.to_owned()),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -155,12 +120,7 @@ struct FileNames {
 }
 
 impl FileNames {
-    fn from_target(
-        target: &Target,
-        lib_name: &str,
-        targetdir: &Path,
-        use_meson_naming_convention: bool,
-    ) -> Option<Self> {
+    fn from_target(target: &Target, lib_name: &str, targetdir: &Path) -> Option<Self> {
         let (shared_lib, static_lib, impl_lib, debug_info, def) = match target.os.as_str() {
             "none" | "linux" | "freebsd" | "dragonfly" | "netbsd" | "android" | "haiku"
             | "illumos" | "openbsd" | "emscripten" | "hurd" => {
@@ -174,29 +134,22 @@ impl FileNames {
                 (shared_lib, static_lib, None, None, None)
             }
             "windows" => {
-                let shared_lib = targetdir.join(format!("{lib_name}.dll"));
-                let def = targetdir.join(format!("{lib_name}.def"));
-
                 if target.env == "msvc" {
+                    let shared_lib = targetdir.join(format!("{lib_name}.dll"));
                     let static_lib = targetdir.join(format!("{lib_name}.lib"));
-                    let impl_lib = if use_meson_naming_convention {
-                        targetdir.join(format!("{lib_name}.lib"))
-                    } else {
-                        targetdir.join(format!("{lib_name}.dll.lib"))
-                    };
-                    let pdb = Some(targetdir.join(format!("{lib_name}.pdb")));
+                    let impl_lib = targetdir.join(format!("{lib_name}.dll.lib"));
+                    let pdb = targetdir.join(format!("{lib_name}.pdb"));
+                    let def = targetdir.join(format!("{lib_name}.def"));
 
-                    (shared_lib, static_lib, Some(impl_lib), pdb, Some(def))
+                    (shared_lib, static_lib, Some(impl_lib), Some(pdb), Some(def))
                 } else {
+                    // FIXME: `dll_prefix` should be `lib` on `*-windows-gnu` targets.
+                    // https://github.com/rust-lang/rust/pull/94872#discussion_r825219902
+                    let shared_lib = targetdir.join(format!("{lib_name}.dll"));
                     let static_lib = targetdir.join(format!("lib{lib_name}.a"));
-                    let impl_lib = if use_meson_naming_convention {
-                        targetdir.join(format!("lib{lib_name}.dll.a"))
-                    } else {
-                        targetdir.join(format!("{lib_name}.dll.a"))
-                    };
-                    let pdb = None;
+                    let impl_lib = targetdir.join(format!("lib{lib_name}.dll.a"));
 
-                    (shared_lib, static_lib, Some(impl_lib), pdb, Some(def))
+                    (shared_lib, static_lib, Some(impl_lib), None, None)
                 }
             }
             _ => return None,
@@ -238,8 +191,7 @@ mod test {
                 os: os.to_string(),
                 env: String::from(""),
             };
-            let file_names =
-                FileNames::from_target(&target, "ferris", Path::new("/foo/bar"), false);
+            let file_names = FileNames::from_target(&target, "ferris", Path::new("/foo/bar"));
 
             let expected = FileNames {
                 static_lib: PathBuf::from("/foo/bar/libferris.a"),
@@ -262,8 +214,7 @@ mod test {
                 os: os.to_string(),
                 env: String::from(""),
             };
-            let file_names =
-                FileNames::from_target(&target, "ferris", Path::new("/foo/bar"), false);
+            let file_names = FileNames::from_target(&target, "ferris", Path::new("/foo/bar"));
 
             let expected = FileNames {
                 static_lib: PathBuf::from("/foo/bar/libferris.a"),
@@ -285,7 +236,7 @@ mod test {
             os: String::from("windows"),
             env: String::from("msvc"),
         };
-        let file_names = FileNames::from_target(&target, "ferris", Path::new("/foo/bar"), false);
+        let file_names = FileNames::from_target(&target, "ferris", Path::new("/foo/bar"));
 
         let expected = FileNames {
             static_lib: PathBuf::from("/foo/bar/ferris.lib"),
@@ -306,14 +257,14 @@ mod test {
             os: String::from("windows"),
             env: String::from("gnu"),
         };
-        let file_names = FileNames::from_target(&target, "ferris", Path::new("/foo/bar"), false);
+        let file_names = FileNames::from_target(&target, "ferris", Path::new("/foo/bar"));
 
         let expected = FileNames {
             static_lib: PathBuf::from("/foo/bar/libferris.a"),
             shared_lib: PathBuf::from("/foo/bar/ferris.dll"),
-            impl_lib: Some(PathBuf::from("/foo/bar/ferris.dll.a")),
+            impl_lib: Some(PathBuf::from("/foo/bar/libferris.dll.a")),
             debug_info: None,
-            def: Some(PathBuf::from("/foo/bar/ferris.def")),
+            def: None,
         };
 
         assert_eq!(file_names.unwrap(), expected);

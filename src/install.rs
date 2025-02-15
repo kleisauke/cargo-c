@@ -242,7 +242,7 @@ pub fn cinstall(ws: &Workspace, packages: &[CPackage]) -> anyhow::Result<()> {
 
         if let Some(ref static_lib) = build_targets.static_lib {
             ws.gctx().shell().status("Installing", "static library")?;
-            let file_name = build_targets.static_output_file_name().unwrap();
+            let file_name = static_lib.file_name().unwrap();
 
             copy(ws, static_lib, install_path_lib.join(file_name))?;
         }
@@ -257,7 +257,7 @@ pub fn cinstall(ws: &Workspace, packages: &[CPackage]) -> anyhow::Result<()> {
                     lib.install(ws, capi_config, shared_lib, &install_path_lib)?;
                 }
                 LibType::Windows => {
-                    let lib_name = build_targets.shared_output_file_name().unwrap();
+                    let lib_name = shared_lib.file_name().unwrap();
 
                     if capi_config.library.install_subdir.is_none() {
                         let install_path_bin = append_to_destdir(destdir.as_deref(), &paths.bindir);
@@ -272,9 +272,10 @@ pub fn cinstall(ws: &Workspace, packages: &[CPackage]) -> anyhow::Result<()> {
                         let impl_lib = build_targets.impl_lib.as_ref().unwrap();
                         let impl_lib_name = impl_lib.file_name().unwrap();
                         copy(ws, impl_lib, install_path_lib.join(impl_lib_name))?;
-                        let def = build_targets.def.as_ref().unwrap();
-                        let def_name = def.file_name().unwrap();
-                        copy(ws, def, install_path_lib.join(def_name))?;
+                        if let Some(ref def) = build_targets.def {
+                            let def_name = def.file_name().unwrap();
+                            copy(ws, def, install_path_lib.join(def_name))?;
+                        }
                     }
                 }
             }

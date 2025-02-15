@@ -130,25 +130,18 @@ fn patch_target(
 }
 
 /// Build def file for windows-msvc
-fn build_def_file(
-    ws: &Workspace,
-    name: &str,
-    target: &target::Target,
-    targetdir: &Path,
-) -> anyhow::Result<()> {
-    if target.os == "windows" && target.env == "msvc" {
-        ws.gctx().shell().status("Building", ".def file")?;
+fn build_def_file(ws: &Workspace, name: &str, targetdir: &Path) -> anyhow::Result<()> {
+    ws.gctx().shell().status("Building", ".def file")?;
 
-        // Parse the .dll as an object file
-        let dll_path = targetdir.join(format!("{}.dll", name.replace('-', "_")));
-        let dll_content = std::fs::read(&dll_path)?;
-        let dll_file = object::File::parse(&*dll_content)?;
+    // Parse the .dll as an object file
+    let dll_path = targetdir.join(format!("{}.dll", name.replace('-', "_")));
+    let dll_content = std::fs::read(&dll_path)?;
+    let dll_file = object::File::parse(&*dll_content)?;
 
-        // Create the .def output file
-        let def_file = cargo_util::paths::create(targetdir.join(format!("{name}.def")))?;
+    // Create the .def output file
+    let def_file = cargo_util::paths::create(targetdir.join(format!("{name}.def")))?;
 
-        write_def_file(dll_file, def_file)?;
-    }
+    write_def_file(dll_file, def_file)?;
 
     Ok(())
 }
@@ -166,7 +159,7 @@ fn write_def_file<W: std::io::Write>(dll_file: object::File, mut def_file: W) ->
     Ok(def_file)
 }
 
-/// Build import library for windows
+/// Build import library for windows-msvc
 fn build_implib_file(
     ws: &Workspace,
     build_targets: &BuildTargets,
@@ -174,39 +167,42 @@ fn build_implib_file(
     target: &target::Target,
     targetdir: &Path,
 ) -> anyhow::Result<()> {
-    if target.os == "windows" {
-        ws.gctx().shell().status("Building", "implib")?;
+    ws.gctx().shell().status("Building", "implib")?;
 
-        let def_path = targetdir.join(format!("{name}.def"));
-        let def_contents = cargo_util::paths::read(&def_path)?;
+    let def_path = targetdir.join(format!("{name}.def"));
+    let def_contents = cargo_util::paths::read(&def_path)?;
 
-        let flavor = match target.env.as_str() {
-            "msvc" => Flavor::Msvc,
-            _ => Flavor::Gnu,
-        };
+    // FIXME: Arm64EC/Arm64X isn't supported by implib crate, switch to
+    // ar_archive_writer instead?
+    let machine_type = match target.arch.as_str() {
+        "x86_64" => MachineType::AMD64,
+        "x86" => MachineType::I386,
+        "aarch64" => MachineType::ARM64,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Windows support for {} is not implemented yet.",
+                target.arch
+            ))
+        }
+    };
 
-        let machine_type = match target.arch.as_str() {
-            "x86_64" => MachineType::AMD64,
-            "x86" => MachineType::I386,
-            "aarch64" => MachineType::ARM64,
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Windows support for {} is not implemented yet.",
-                    target.arch
-                ))
-            }
-        };
+    let shared_lib = build_targets.shared_lib.as_ref().unwrap();
+    let lib_name = shared_lib
+        .file_name()
+        .unwrap()
+        .to_owned()
+        .into_string()
+        .unwrap();
+    let implib_path = build_targets.impl_lib.as_ref().unwrap();
 
-        let lib_name = build_targets
-            .shared_output_file_name()
-            .unwrap()
-            .into_string()
-            .unwrap();
-        let implib_path = build_targets.impl_lib.as_ref().unwrap();
-
-        let implib_file = cargo_util::paths::create(implib_path)?;
-        write_implib(implib_file, lib_name, machine_type, flavor, &def_contents)?;
-    }
+    let implib_file = cargo_util::paths::create(implib_path)?;
+    write_implib(
+        implib_file,
+        lib_name,
+        machine_type,
+        Flavor::Msvc,
+        &def_contents,
+    )?;
 
     Ok(())
 }
@@ -971,14 +967,8 @@ impl CPackage {
         let name = &capi_config.library.name;
 
         let install_paths = InstallPaths::new(name, rustc_target, args, &capi_config);
-        let build_targets = BuildTargets::new(
-            name,
-            rustc_target,
-            root_output,
-            library_types,
-            &capi_config,
-            args.get_flag("meson"),
-        )?;
+        let build_targets =
+            BuildTargets::new(name, rustc_target, root_output, library_types, &capi_config)?;
 
         let finger_print = FingerPrint::new(&id, root_output, &build_targets, &install_paths);
 
@@ -1198,9 +1188,13 @@ pub fn cbuild(
 
             build_pc_files(ws, &capi_config.pkg_config.filename, &root_output, &pc)?;
 
-            if !library_types.only_staticlib() && capi_config.library.import_library {
+            if !library_types.only_staticlib()
+                && capi_config.library.import_library
+                && rustc_target.os == "windows"
+                && rustc_target.env == "msvc"
+            {
                 let lib_name = name;
-                build_def_file(ws, lib_name, &rustc_target, &root_output)?;
+                build_def_file(ws, lib_name, &root_output)?;
                 build_implib_file(ws, build_targets, lib_name, &rustc_target, &root_output)?;
             }
 
@@ -1226,7 +1220,6 @@ pub fn cbuild(
                     &root_output,
                     library_types,
                     capi_config,
-                    args.get_flag("meson"),
                 )?;
 
                 if let (Some(from_static_lib), Some(to_static_lib)) = (

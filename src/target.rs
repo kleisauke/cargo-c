@@ -112,8 +112,8 @@ impl Target {
         } else if os == "windows" && env == "gnu" {
             // This is only set up to work on GNU toolchain versions of Rust
             lines.push(format!(
-                "-Wl,--output-def,{}",
-                target_dir.join(format!("{lib_name}.def")).display()
+                "-Wl,--out-implib,{}",
+                target_dir.join(format!("lib{lib_name}.dll.a")).display()
             ));
         }
 
